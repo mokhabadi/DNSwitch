@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Collections.Generic;
 using System.Net.Sockets;
+using System.Management;
 
 namespace DNSwitch
 {
@@ -29,6 +30,8 @@ namespace DNSwitch
             UpdateMenu(res);
             NetworkChange.NetworkAvailabilityChanged += NetworkAvailabilityChanged;
             NetworkChange.NetworkAddressChanged += NetworkAddressChanged;
+
+            GetCurrentDNSSettings();
         }
 
         void ApplicationExit(object? _, EventArgs __)
@@ -78,7 +81,71 @@ namespace DNSwitch
         void UpdateMenu(NetworkInterface[] networkInterfaces)
         {
             Debug.WriteLine("-UpdateMenu");
-            networkInterfaces.ToList().ForEach(x => Debug.WriteLine(x.Name));
+            networkInterfaces.ToList().ForEach(x => Debug.WriteLine($"{x.Name} {x.Id}"));
         }
+
+
+        public static void SetManualDnsServers(string nicDescription, params string[] dnsServers)
+        {
+            try
+            {
+                using (var networkConfigMng = new ManagementClass("Win32_NetworkAdapterConfiguration"))
+                {
+                    using (var networkConfigs = networkConfigMng.GetInstances())
+                    {
+                        foreach (var managementObject in networkConfigs.Cast<ManagementObject>().Where(mo => (bool)mo["IPEnabled"] && (string)mo["Description"] == nicDescription))
+                        {
+                            using (var newDNS = managementObject.GetMethodParameters("SetDNSServerSearchOrder"))
+                            {
+                                newDNS["DNSServerSearchOrder"] = dnsServers;
+                                managementObject.InvokeMethod("SetDNSServerSearchOrder", newDNS, null);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An error occurred: {ex.Message}");
+            }
+        }
+
+        public static void GetCurrentDNSSettings()
+        {
+            try
+            {
+                using ManagementClass networkConfigMng = new ManagementClass("Win32_NetworkAdapterConfiguration");
+                using ManagementObjectCollection networkConfigs = networkConfigMng.GetInstances();
+
+                foreach (var managementObject in networkConfigs.Cast<ManagementObject>().Where(mo => (bool)mo["IPEnabled"]))
+                {
+                    var dnsServers = (string[])managementObject["DNSServerSearchOrder"];
+
+                    foreach (PropertyData prop in managementObject.Properties)
+                    {
+                        Debug.WriteLine("-{0}: {1}", prop.Name, prop.Value);
+                    }
+
+                    if (dnsServers != null)
+                    {
+                        Debug.WriteLine($"DNS Servers for {managementObject["Description"]}:");
+                        foreach (var dnsServer in dnsServers)
+                        {
+                            Debug.WriteLine(dnsServer);
+                        }
+                    }
+                    else
+                    {
+                        Debug.WriteLine($"{managementObject["Description"]} is using DHCP for DNS.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"An error occurred: {ex.Message}");
+            }
+        }
+
+
     }
 }
